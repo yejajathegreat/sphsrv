@@ -138,21 +138,10 @@ public class ClientSession
             // Step 13: Wait for 0x13 ACK
             while (await _ns.ReadAsync(rcvBuffer) != 0x13) { }
 
-            // Step 14: Send world data + dungeon
-            if (selectedCharacter.X < -1000 && selectedCharacter.Y < -4000)
-            {
-                // Character is at dungeon coords — send dungeon instance data
-                await SendNewPlayerDungeon(playerIndexStr);
-            }
-            else
-            {
-                // Character is in open world — send world data
-                await WorldDataTest.SendNewCharacterWorldData(_ns, playerIndexStr);
-            }
+            // Step 14: Send world data (ALWAYS required — client waits for this to exit loading screen)
+            await WorldDataTest.SendNewCharacterWorldData(_ns, playerIndexStr);
 
-            // Step 15: Spawn NPCs (only in open world, not in dungeon)
-            var isInDungeon = selectedCharacter.X < -1000 && selectedCharacter.Y < -4000;
-            if (!isInDungeon)
+            // Step 15: Spawn NPCs
             {
                 try
                 {
@@ -168,6 +157,27 @@ public class ClientSession
                 {
                     Console.WriteLine($"SRV: NPC spawn error: {ex.Message}");
                 }
+            }
+
+            // Step 15b: Spawn dungeon room objects
+            try
+            {
+                var spawnDataPath2 = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SpawnData");
+                var roomFile = Path.Combine(spawnDataPath2, "000.mbd");
+                if (File.Exists(roomFile))
+                {
+                    var roomObjects = RoomSpawner.ParseRoomFile(roomFile);
+                    var roomPackets = RoomSpawner.BuildRoomSpawnPackets(roomObjects, spawnDataPath2);
+                    if (roomPackets.Length > 0)
+                    {
+                        await _ns.WriteAsync(roomPackets);
+                        Console.WriteLine($"SRV: Sent {roomPackets.Length} bytes of room spawn data");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"SRV: Room spawn error: {ex.Message}");
             }
 
             // Step 16: Start 6-second ping thread

@@ -17,7 +17,8 @@ public class CharacterRecord
     public int Id { get; set; }
     public string Name { get; set; } = string.Empty;
     public int Level { get; set; } = 1;
-    // Default coords: Shipstone city center
+    // Default coords: Shipstone (safe open world spawn with terrain)
+    // Dungeon room spawning still WIP — room model renders but has no collision
     public double X { get; set; } = 2614;
     public double Y { get; set; } = 157;
     public double Z { get; set; } = 1293;
