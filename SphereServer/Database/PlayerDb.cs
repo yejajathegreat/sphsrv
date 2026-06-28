@@ -100,6 +100,8 @@ public class PlayerDb : IDisposable
         return player;
     }
 
+    public PlayerRecord? GetPlayerById(int id) => _players.FindById(id);
+
     public CharacterRecord? GetCharacter(int id) => _characters.FindById(id);
 
     public List<CharacterRecord> GetCharacters(List<int> ids) =>

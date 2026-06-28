@@ -109,7 +109,10 @@ public class ClientSession
                 selectedCharacterIndex = rcvBuffer[17] / 4 - 1;
             }
 
-            // Refresh characters after possible creation
+            // Refresh player from DB (CharacterIds may have been updated during creation)
+            var freshPlayer = _server.Database.GetPlayerById(player.Id);
+            if (freshPlayer != null)
+                player = freshPlayer;
             characters = _server.Database.GetCharacters(player.CharacterIds);
             CharacterRecord? selectedCharacter = null;
             if (selectedCharacterIndex >= 0 && selectedCharacterIndex < characters.Count)
