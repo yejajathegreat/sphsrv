@@ -17,10 +17,11 @@ public class CharacterRecord
     public int Id { get; set; }
     public string Name { get; set; } = string.Empty;
     public int Level { get; set; } = 1;
-    public double X { get; set; }
-    public double Y { get; set; } = 150;
-    public double Z { get; set; }
-    public double Turn { get; set; }
+    // Default coords: new player dungeon entrance (knelse)
+    public double X { get; set; } = -1098.69506835937500;
+    public double Y { get; set; } = -4501.61474609375000;
+    public double Z { get; set; } = 1900.05493164062500;
+    public double Turn { get; set; } = 1.57079637050629;
     public int Hp { get; set; } = 100;
     public int MaxHp { get; set; } = 100;
     public int Mp { get; set; } = 100;

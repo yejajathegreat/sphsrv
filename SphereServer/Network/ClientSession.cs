@@ -146,18 +146,6 @@ public class ClientSession
             // Step 16: Start 6-second ping thread
             CreateSixSecondPingThread();
 
-            // Step 17: Start test mob data thread
-#pragma warning disable CS4014
-            Task.Run(async () =>
-            {
-                while (_ns.CanWrite)
-                {
-                    await _ns.WriteAsync(TestHelper.GetTestMobData());
-                    Thread.Sleep(1000);
-                }
-            });
-#pragma warning restore CS4014
-
             Thread.Sleep(50);
 
             // Step 18: Main ingame loop
@@ -369,8 +357,8 @@ public class ClientSession
         {
             Thread.Sleep(3000);
 
-            var newDungeonCoords = new WorldCoords(-1098, 4501.62158203125, 1900, 1.55);
-            var teleportCoords = new WorldCoords(-1098.69506835937500, 4501.61474609375000,
+            var newDungeonCoords = new WorldCoords(-1098, -4501.62158203125, 1900, 1.55);
+            var teleportCoords = new WorldCoords(-1098.69506835937500, -4501.61474609375000,
                 1900.05493164062500, 1.57079637050629);
 
             await _ns.WriteAsync(CharacterSerializer.GetTeleportPacket(
