@@ -136,7 +136,9 @@ public class ClientSession
     // ===== STEP 3: Login =====
     private async Task HandleLogin(byte[] rawData)
     {
+        Console.WriteLine($"[CLIENT {PlayerIndex}] Login raw ({rawData.Length}b): {ByteHelper.ToHex(rawData)}");
         var decoded = PacketCodec.DecodeClientPacket(rawData);
+        Console.WriteLine($"[CLIENT {PlayerIndex}] Login decoded ({decoded.Length}b): {ByteHelper.ToHex(decoded)}");
         var (login, password) = LoginDecoder.Decode(decoded);
 
         if (string.IsNullOrEmpty(login))

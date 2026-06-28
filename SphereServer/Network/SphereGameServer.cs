@@ -7,14 +7,18 @@ namespace SphereServer.Network;
 
 /// <summary>
 /// Main TCP server. Accepts connections, assigns player indices, manages sessions.
+/// Listens on both game port (25860) and update port (25859) since the client
+/// may connect to either depending on configuration.
 /// </summary>
 public class SphereGameServer
 {
     private const int DefaultPort = 25860;
+    private const int DefaultUpdatePort = 25859;
 
     public PlayerDb Database { get; }
 
     private readonly TcpListener _listener;
+    private readonly TcpListener _updateListener;
     private readonly ConcurrentDictionary<ushort, ClientSession> _clients = new();
     private ushort _nextPlayerIndex = 1;
     private readonly CancellationTokenSource _cts = new();
@@ -23,34 +27,48 @@ public class SphereGameServer
     {
         Database = new PlayerDb(dbPath);
         _listener = new TcpListener(IPAddress.Any, port);
+        _updateListener = new TcpListener(IPAddress.Any, port == DefaultPort ? DefaultUpdatePort : port - 1);
     }
 
     public async Task StartAsync()
     {
         _listener.Start();
-        Console.WriteLine($"[SERVER] Sphere server listening on port {((IPEndPoint)_listener.LocalEndpoint).Port}");
+        _updateListener.Start();
+        var mainPort = ((IPEndPoint)_listener.LocalEndpoint).Port;
+        var updPort = ((IPEndPoint)_updateListener.LocalEndpoint).Port;
+        Console.WriteLine($"[SERVER] Listening on ports {mainPort} (game) and {updPort} (update/auth)");
         Console.WriteLine($"[SERVER] Waiting for connections...");
 
         try
         {
-            while (!_cts.Token.IsCancellationRequested)
-            {
-                var tcpClient = await _listener.AcceptTcpClientAsync(_cts.Token);
-                var playerIndex = _nextPlayerIndex++;
-
-                var session = new ClientSession(tcpClient, playerIndex, this);
-                _clients[playerIndex] = session;
-
-                Console.WriteLine($"[SERVER] New connection #{playerIndex}, total clients: {_clients.Count}");
-
-                // Run client session in background
-                _ = Task.Run(() => session.RunAsync(), _cts.Token);
-            }
+            // Accept on both ports in parallel
+            var mainTask = AcceptLoop(_listener, "GAME");
+            var updTask = AcceptLoop(_updateListener, "AUTH");
+            await Task.WhenAny(mainTask, updTask);
         }
         catch (OperationCanceledException) { }
         finally
         {
             _listener.Stop();
+            _updateListener.Stop();
+        }
+    }
+
+    private async Task AcceptLoop(TcpListener listener, string tag)
+    {
+        while (!_cts.Token.IsCancellationRequested)
+        {
+            var tcpClient = await listener.AcceptTcpClientAsync(_cts.Token);
+            var playerIndex = _nextPlayerIndex++;
+            var endpoint = tcpClient.Client.RemoteEndPoint?.ToString() ?? "?";
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+
+            Console.WriteLine($"[SERVER] New connection #{playerIndex} on port {port} ({tag}) from {endpoint}");
+
+            var session = new ClientSession(tcpClient, playerIndex, this);
+            _clients[playerIndex] = session;
+
+            _ = Task.Run(() => session.RunAsync(), _cts.Token);
         }
     }
 
