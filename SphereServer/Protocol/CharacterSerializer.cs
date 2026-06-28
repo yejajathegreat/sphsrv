@@ -7,12 +7,7 @@ namespace SphereServer.Protocol;
 
 /// <summary>
 /// Serializes character data for the Sphere protocol.
-/// Two formats:
-/// - ToCharacterListBytes: 108-byte slot for character select screen (3 slots)
-/// - ToGameDataBytes: variable-length packet for entering the game world
-///
-/// Both use bitwise packing with 2-bit carry between fields.
-/// Ported from SphereEmu CharacterDbEntrySerializer.cs
+/// Ported 1:1 from knelse CharacterData.cs (ToCharacterListByteArray, ToGameDataByteArray, GetTeleportAndUpdateCharacterByteArray).
 /// </summary>
 public static class CharacterSerializer
 {
@@ -24,213 +19,343 @@ public static class CharacterSerializer
         Win1251 = Encoding.GetEncoding(1251);
     }
 
+    public static Encoding GetWin1251() => Win1251;
+
     /// <summary>
     /// 108-byte character slot for the selection screen.
-    /// Stats are packed in a continuous bit stream with 2-bit carry.
+    /// Ported 1:1 from knelse CharacterData.ToCharacterListByteArray()
     /// </summary>
-    public static byte[] ToCharacterListBytes(CharacterRecord ch, ushort clientIndex)
+    public static byte[] ToCharacterListBytes(CharacterRecord ch, ushort playerIndex)
     {
-        var nameEncoded = new byte[19];
-        var nameBytes = Win1251.GetBytes(ch.Name);
-        Array.Copy(nameBytes, nameEncoded, Math.Min(nameBytes.Length, 19));
+        var nameEncodedWithPadding = new byte[19];
+        var nameEncoded = Win1251.GetBytes(ch.Name);
+        Array.Copy(nameEncoded, nameEncodedWithPadding, Math.Min(nameEncoded.Length, 19));
 
-        ushort maxHp = (ushort)ch.MaxHp;
-        ushort maxMp = (ushort)ch.MaxMp;
-        ushort str = (ushort)ch.Strength;
-        ushort agi = (ushort)ch.Agility;
-        ushort acc = (ushort)ch.Accuracy;
-        ushort end = (ushort)ch.Endurance;
-        ushort earth = (ushort)ch.Earth;
-        ushort air = (ushort)ch.Air;
-        ushort water = (ushort)ch.Water;
-        ushort fire = (ushort)ch.Fire;
-        ushort pdef = 0, mdef = 0;
-        byte karma = 0;
-        ushort satMax = 200, satCur = 200;
-        ushort curHp = (ushort)ch.Hp;
-        ushort curMp = (ushort)ch.Mp;
-        int titleMinusOne = Math.Max(0, ch.Level - 1);
-        int degreeMinusOne = 0;
-        uint titleXp = 0, degreeXp = 0;
-        ushort availTitleStats = 0, availDegreeStats = 0;
+        ushort MaxHP = (ushort)ch.MaxHp;
+        ushort MaxMP = (ushort)ch.MaxMp;
+        ushort Strength = (ushort)ch.Strength;
+        ushort Agility = (ushort)ch.Agility;
+        ushort Accuracy = (ushort)ch.Accuracy;
+        ushort Endurance = (ushort)ch.Endurance;
+        ushort Earth = (ushort)ch.Earth;
+        ushort Air = (ushort)ch.Air;
+        ushort Water = (ushort)ch.Water;
+        ushort Fire = (ushort)ch.Fire;
+        ushort PDef = 0;
+        ushort MDef = 0;
+        byte Karma = 3; // Neutral
+        ushort MaxSatiety = 100;
+        ushort TitleLevelMinusOne = 0;
+        ushort DegreeLevelMinusOne = 0;
+        uint TitleXP = 0;
+        uint DegreeXP = 0;
+        ushort CurrentSatiety = 50;
+        ushort CurrentHP = (ushort)ch.Hp;
+        ushort CurrentMP = (ushort)ch.Mp;
+        ushort AvailableTitleStats = 4;
+        ushort AvailableDegreeStats = 4;
+        bool IsGenderFemale = ch.IsFemale;
+        byte FaceType = ch.FaceType;
+        byte HairStyle = ch.HairStyle;
+        byte HairColor = ch.HairColor;
+        byte Tattoo = ch.Tattoo;
+        byte BootModelId = 0;
+        byte PantsModelId = 0;
+        byte ArmorModelId = 0;
+        byte HelmetModelId = 0;
+        byte GlovesModelId = 0;
+        bool IsNotQueuedForDeletion = true;
 
-        // Pack stats with 2-bit carry chain
-        byte hpMax1 = (byte)(((maxHp & 0b111111) << 2) + 1);
-        byte hpMax2 = (byte)((maxHp & 0b11111111000000) >> 6);
-        byte mpMax1 = PackLow(maxMp, maxHp);
-        byte mpMax2 = PackHigh(maxMp);
-        byte str1 = PackLow(str, maxMp); byte str2 = PackHigh(str);
-        byte agi1 = PackLow(agi, str); byte agi2 = PackHigh(agi);
-        byte acc1 = PackLow(acc, agi); byte acc2 = PackHigh(acc);
-        byte end1 = PackLow(end, acc); byte end2 = PackHigh(end);
-        byte earth1 = PackLow(earth, end); byte earth2 = PackHigh(earth);
-        byte air1 = PackLow(air, earth); byte air2 = PackHigh(air);
-        byte water1 = PackLow(water, air); byte water2 = PackHigh(water);
-        byte fire1 = PackLow(fire, water); byte fire2 = PackHigh(fire);
-        byte pdef1 = PackLow(pdef, fire); byte pdef2b = PackHigh(pdef);
-        byte mdef1 = PackLow(mdef, pdef); byte mdef2b = PackHigh(mdef);
-        byte karma1 = (byte)(((karma & 0b111111) << 2) + ((mdef & 0b1100000000000000) >> 14));
-        byte satMax1 = (byte)(((satMax & 0b111111) << 2) + ((karma & 0b11000000) >> 6)); // karma is byte, high bits 0
-        byte satMax2 = (byte)((satMax & 0b11111111000000) >> 6);
-        byte titleLvl1 = PackLow((ushort)titleMinusOne, satMax);
-        byte titleLvl2 = PackHigh((ushort)titleMinusOne);
-        byte degreeLvl1 = PackLow((ushort)degreeMinusOne, (ushort)titleMinusOne);
-        byte degreeLvl2 = PackHigh((ushort)degreeMinusOne);
+        var hpMax1 = (byte)(((MaxHP & 0b111111) << 2) + 1);
+        var hpMax2 = (byte)((MaxHP & 0b11111111000000) >> 6);
+        var mpMax1 = (byte)(((MaxMP & 0b111111) << 2) + ((MaxHP & 0b1100000000000000) >> 14));
+        var mpMax2 = (byte)((MaxMP & 0b11111111000000) >> 6);
+        var str1 = (byte)(((Strength & 0b111111) << 2) + ((MaxMP & 0b1100000000000000) >> 14));
+        var str2 = (byte)((Strength & 0b11111111000000) >> 6);
+        var agi1 = (byte)(((Agility & 0b111111) << 2) + ((Strength & 0b1100000000000000) >> 14));
+        var agi2 = (byte)((Agility & 0b11111111000000) >> 6);
+        var acc1 = (byte)(((Accuracy & 0b111111) << 2) + ((Agility & 0b1100000000000000) >> 14));
+        var acc2 = (byte)((Accuracy & 0b11111111000000) >> 6);
+        var end1 = (byte)(((Endurance & 0b111111) << 2) + ((Accuracy & 0b1100000000000000) >> 14));
+        var end2 = (byte)((Endurance & 0b11111111000000) >> 6);
+        var ert1 = (byte)(((Earth & 0b111111) << 2) + ((Endurance & 0b1100000000000000) >> 14));
+        var ert2 = (byte)((Earth & 0b11111111000000) >> 6);
+        var air1 = (byte)(((Air & 0b111111) << 2) + ((Earth & 0b1100000000000000) >> 14));
+        var air2 = (byte)((Air & 0b11111111000000) >> 6);
+        var wat1 = (byte)(((Water & 0b111111) << 2) + ((Air & 0b1100000000000000) >> 14));
+        var wat2 = (byte)((Water & 0b11111111000000) >> 6);
+        var fir1 = (byte)(((Fire & 0b111111) << 2) + ((Water & 0b1100000000000000) >> 14));
+        var fir2 = (byte)((Fire & 0b11111111000000) >> 6);
+        var pd1 = (byte)(((PDef & 0b111111) << 2) + ((Fire & 0b1100000000000000) >> 14));
+        var pd2 = (byte)((PDef & 0b11111111000000) >> 6);
+        var md1 = (byte)(((MDef & 0b111111) << 2) + ((PDef & 0b1100000000000000) >> 14));
+        var md2 = (byte)((MDef & 0b11111111000000) >> 6);
+        var krm1 = (byte)(((((byte)Karma) & 0b111111) << 2) + ((MDef & 0b1100000000000000) >> 14));
+        var satMax1 = (byte)(((MaxSatiety & 0b111111) << 2) + ((((byte)Karma) & 0b11000000) >> 14));
+        var satMax2 = (byte)((MaxSatiety & 0b11111111000000) >> 6);
+        var tit1 = (byte)(((TitleLevelMinusOne & 0b111111) << 2) + ((MaxSatiety & 0b1100000000000000) >> 14));
+        var tit2 = (byte)((TitleLevelMinusOne & 0b11111111000000) >> 6);
+        var deg1 = (byte)(((DegreeLevelMinusOne & 0b111111) << 2) + ((TitleLevelMinusOne & 0b1100000000000000) >> 14));
+        var deg2 = (byte)((DegreeLevelMinusOne & 0b11111111000000) >> 6);
+        var txp1 = (byte)(((TitleXP & 0b111111) << 2) + ((DegreeLevelMinusOne & 0b1100000000000000) >> 14));
+        var txp2 = (byte)((TitleXP & 0b11111111000000) >> 6);
+        var txp3 = (byte)((TitleXP & 0b1111111100000000000000) >> 14);
+        var txp4 = (byte)((TitleXP & 0b111111110000000000000000000000) >> 22);
+        var dxp1 = (byte)(((DegreeXP & 0b111111) << 2) + ((TitleXP & 0b11000000000000000000000000000000) >> 30));
+        var dxp2 = (byte)((DegreeXP & 0b11111111000000) >> 6);
+        var dxp3 = (byte)((DegreeXP & 0b1111111100000000000000) >> 14);
+        var dxp4 = (byte)((DegreeXP & 0b111111110000000000000000000000) >> 22);
+        var satCur1 = (byte)(((CurrentSatiety & 0b111111) << 2) +
+                             ((DegreeXP & 0b11000000000000000000000000000000) >> 30));
+        var satCur2 = (byte)((CurrentSatiety & 0b11111111000000) >> 6);
+        var hpCur1 = (byte)(((CurrentHP & 0b111111) << 2) + ((CurrentSatiety & 0b1100000000000000) >> 14));
+        var hpCur2 = (byte)((CurrentHP & 0b11111111000000) >> 6);
+        var mpCur1 = (byte)(((CurrentMP & 0b111111) << 2) + ((CurrentHP & 0b1100000000000000) >> 14));
+        var mpCur2 = (byte)((CurrentMP & 0b11111111000000) >> 6);
+        var titleStats1 = (byte)(((AvailableTitleStats & 0b111111) << 2) + ((CurrentMP & 0b1100000000000000) >> 14));
+        var titleStats2 = (byte)((AvailableTitleStats & 0b11111111000000) >> 6);
+        var degStats1 = (byte)(((AvailableDegreeStats & 0b111111) << 2) +
+                               ((AvailableTitleStats & 0b1100000000000000) >> 14));
+        var degStats2 = (byte)((AvailableDegreeStats & 0b11111111000000) >> 6);
+        var degStats3 = (byte)(((0b111010 << 2) + ((AvailableDegreeStats & 0b1100000000000000) >> 14)));
+        var isFemale1 = (byte)((IsGenderFemale ? 1 : 0) << 2);
+        var name1 = (byte)(((nameEncodedWithPadding[0] & 0b111111) << 2));
+        var name2 = (byte)(((nameEncodedWithPadding[1] & 0b111111) << 2) +
+                           ((nameEncodedWithPadding[0] & 0b11000000) >> 6));
+        var name3 = (byte)(((nameEncodedWithPadding[2] & 0b111111) << 2) +
+                           ((nameEncodedWithPadding[1] & 0b11000000) >> 6));
+        var name4 = (byte)(((nameEncodedWithPadding[3] & 0b111111) << 2) +
+                           ((nameEncodedWithPadding[2] & 0b11000000) >> 6));
+        var name5 = (byte)(((nameEncodedWithPadding[4] & 0b111111) << 2) +
+                           ((nameEncodedWithPadding[3] & 0b11000000) >> 6));
+        var name6 = (byte)(((nameEncodedWithPadding[5] & 0b111111) << 2) +
+                           ((nameEncodedWithPadding[4] & 0b11000000) >> 6));
+        var name7 = (byte)(((nameEncodedWithPadding[6] & 0b111111) << 2) +
+                           ((nameEncodedWithPadding[5] & 0b11000000) >> 6));
+        var name8 = (byte)(((nameEncodedWithPadding[7] & 0b111111) << 2) +
+                           ((nameEncodedWithPadding[6] & 0b11000000) >> 6));
+        var name9 = (byte)(((nameEncodedWithPadding[8] & 0b111111) << 2) +
+                           ((nameEncodedWithPadding[7] & 0b11000000) >> 6));
+        var name10 = (byte)(((nameEncodedWithPadding[9] & 0b111111) << 2) +
+                            ((nameEncodedWithPadding[8] & 0b11000000) >> 6));
+        var name11 = (byte)(((nameEncodedWithPadding[10] & 0b111111) << 2) +
+                            ((nameEncodedWithPadding[9] & 0b11000000) >> 6));
+        var name12 = (byte)(((nameEncodedWithPadding[11] & 0b111111) << 2) +
+                            ((nameEncodedWithPadding[10] & 0b11000000) >> 6));
+        var name13 = (byte)(((nameEncodedWithPadding[12] & 0b111111) << 2) +
+                            ((nameEncodedWithPadding[11] & 0b11000000) >> 6));
+        var name14 = (byte)(((nameEncodedWithPadding[13] & 0b111111) << 2) +
+                            ((nameEncodedWithPadding[12] & 0b11000000) >> 6));
+        var name15 = (byte)(((nameEncodedWithPadding[14] & 0b111111) << 2) +
+                            ((nameEncodedWithPadding[13] & 0b11000000) >> 6));
+        var name16 = (byte)(((nameEncodedWithPadding[15] & 0b111111) << 2) +
+                            ((nameEncodedWithPadding[14] & 0b11000000) >> 6));
+        var name17 = (byte)(((nameEncodedWithPadding[16] & 0b111111) << 2) +
+                            ((nameEncodedWithPadding[15] & 0b11000000) >> 6));
+        var name18 = (byte)(((nameEncodedWithPadding[17] & 0b111111) << 2) +
+                            ((nameEncodedWithPadding[16] & 0b11000000) >> 6));
+        var name19 = (byte)(((nameEncodedWithPadding[18] & 0b111111) << 2) +
+                            ((nameEncodedWithPadding[17] & 0b11000000) >> 6));
 
-        // XP (32-bit each, packed with 2-bit carry)
-        byte titleXp1 = (byte)(((titleXp & 0b111111) << 2) + (((ushort)degreeMinusOne & 0b1100000000000000) >> 14));
-        byte titleXp2 = (byte)((titleXp & 0b11111111000000) >> 6);
-        byte titleXp3 = (byte)((titleXp & 0b1111111100000000000000) >> 14);
-        byte titleXp4 = (byte)((titleXp & 0b111111110000000000000000000000) >> 22);
-        byte degreeXp1 = (byte)(((degreeXp & 0b111111) << 2) + ((titleXp & 0b11000000000000000000000000000000) >> 30));
-        byte degreeXp2 = (byte)((degreeXp & 0b11111111000000) >> 6);
-        byte degreeXp3 = (byte)((degreeXp & 0b1111111100000000000000) >> 14);
-        byte degreeXp4 = (byte)((degreeXp & 0b111111110000000000000000000000) >> 22);
-        byte satCur1 = (byte)(((satCur & 0b111111) << 2) + ((degreeXp & 0b11000000000000000000000000000000) >> 30));
-        byte satCur2 = (byte)((satCur & 0b11111111000000) >> 6);
-        byte hpCur1 = PackLow(curHp, satCur); byte hpCur2 = PackHigh(curHp);
-        byte mpCur1 = PackLow(curMp, curHp); byte mpCur2 = PackHigh(curMp);
-        byte titleStats1 = PackLow(availTitleStats, curMp);
-        byte titleStats2 = PackHigh(availTitleStats);
-        byte degreeStats1 = PackLow(availDegreeStats, availTitleStats);
-        byte degreeStats2 = PackHigh(availDegreeStats);
-        byte degreeStats3 = (byte)((0b111010 << 2) + ((availDegreeStats & 0b1100000000000000) >> 14));
+        var face1 = (byte)(((FaceType & 0b111111) << 2) + ((nameEncodedWithPadding[18] & 0b11000000) >> 6));
+        var hairStyle1 = (byte)(((HairStyle & 0b111111) << 2) + ((FaceType & 0b11000000) >> 6));
+        var hairColor1 = (byte)(((HairColor & 0b111111) << 2) + ((HairStyle & 0b11000000) >> 6));
+        var tattoo1 = (byte)(((Tattoo & 0b111111) << 2) + ((HairColor & 0b11000000) >> 6));
+        var bootsModelId = (byte)(((BootModelId & 0b111111) << 2) + ((Tattoo & 0b11000000) >> 6));
+        var pantsModelId = (byte)(((PantsModelId & 0b111111) << 2) + ((BootModelId & 0b11000000) >> 6));
+        var armorModelId = (byte)(((ArmorModelId & 0b111111) << 2) + ((PantsModelId & 0b11000000) >> 6));
+        var helmetModelId = (byte)(((HelmetModelId & 0b111111) << 2) + ((ArmorModelId & 0b11000000) >> 6));
+        var glovesModelId1 = (byte)(((GlovesModelId & 0b111111) << 2) + ((HelmetModelId & 0b11000000) >> 6));
+        var glovesModelId2 = (byte)((GlovesModelId & 0b11000000) >> 6);
+        var isNotDeleted1 = (byte)(((IsNotQueuedForDeletion ? 1 : 0) << 1) + 1);
 
-        byte isFemale1 = (byte)((ch.IsFemale ? 1 : 0) << 2);
+        var lookType = (byte)(IsNotQueuedForDeletion ? 0x79 : 0x19);
 
-        // Name with 2-bit carry
-        var nameOut = new byte[19];
-        nameOut[0] = (byte)((nameEncoded[0] & 0b111111) << 2);
-        for (int i = 1; i < 19; i++)
-            nameOut[i] = (byte)(((nameEncoded[i] & 0b111111) << 2) + ((nameEncoded[i - 1] & 0b11000000) >> 6));
+        var charDataBytes = new byte[]
+        {
+            0x6C, 0x00, 0x2C, 0x01, 0x00, 0x00, 0x04, GetSecondByte(playerIndex),
+            GetFirstByte(playerIndex), 0x08, 0x40, 0x60, lookType, hpMax1, hpMax2, mpMax1, mpMax2, str1, str2,
+            agi1, agi2, acc1, acc2, end1, end2, ert1, ert2, air1, air2, wat1, wat2, fir1, fir2, pd1, pd2, md1,
+            md2, krm1, satMax1, satMax2, tit1, tit2, deg1, deg2, txp1, txp2, txp3, txp4, dxp1, dxp2, dxp3,
+            dxp4, satCur1, satCur2, hpCur1, hpCur2, mpCur1, mpCur2, titleStats1, titleStats2, degStats1,
+            degStats2, degStats3, 0xC0, 0xC8, 0xC8, isFemale1, name1, name2, name3, name4, name5, name6,
+            name7, name8, name9, name10, name11, name12, name13, name14, name15, name16, name17, name18,
+            name19, face1, hairStyle1, hairColor1, tattoo1, bootsModelId, pantsModelId, armorModelId,
+            helmetModelId, glovesModelId1, glovesModelId2, 0xC0, 0xC0, 0x00, 0xFC, 0xFF, 0xFF, 0xFF,
+            isNotDeleted1, 0x00, 0x00, 0x00, 0x00
+        };
 
-        byte face1 = (byte)(((0 & 0b111111) << 2) + ((nameEncoded[18] & 0b11000000) >> 6));
-        byte hair1 = 0, hairColor1 = 0, tattoo1 = 0;
-        byte boots = 0, pants = 0, armor = 0, helmet = 0;
-        byte gloves1 = 0, gloves2 = 0;
-        byte isNotDeleted = (byte)((1 << 1) + 1); // true
-
-        return
-        [
-            0x6C, 0x00, 0x2C, 0x01, 0x00, 0x00, 0x04, MajorByte(clientIndex), MinorByte(clientIndex), 0x08, 0x40,
-            0x60, 0x79, // lookType
-            hpMax1, hpMax2, mpMax1, mpMax2,
-            str1, str2, agi1, agi2, acc1, acc2, end1, end2,
-            earth1, earth2, air1, air2, water1, water2, fire1, fire2,
-            pdef1, pdef2b, mdef1, mdef2b,
-            karma1, satMax1, satMax2,
-            titleLvl1, titleLvl2, degreeLvl1, degreeLvl2,
-            titleXp1, titleXp2, titleXp3, titleXp4,
-            degreeXp1, degreeXp2, degreeXp3, degreeXp4,
-            satCur1, satCur2, hpCur1, hpCur2, mpCur1, mpCur2,
-            titleStats1, titleStats2, degreeStats1, degreeStats2, degreeStats3,
-            0xC0, 0xC8, 0xC8,
-            isFemale1,
-            nameOut[0], nameOut[1], nameOut[2], nameOut[3], nameOut[4],
-            nameOut[5], nameOut[6], nameOut[7], nameOut[8], nameOut[9],
-            nameOut[10], nameOut[11], nameOut[12], nameOut[13], nameOut[14],
-            nameOut[15], nameOut[16], nameOut[17], nameOut[18],
-            face1, hair1, hairColor1, tattoo1,
-            boots, pants, armor, helmet, gloves1, gloves2,
-            0xC0, 0xC0, 0x00, 0xFC, 0xFF, 0xFF, 0xFF,
-            isNotDeleted, 0x00, 0x00, 0x00, 0x00
-        ];
+        return charDataBytes;
     }
 
     /// <summary>
     /// Variable-length game data packet sent when player enters the world.
-    /// Contains: name, clan, coordinates, equipment slots, stats, money.
+    /// Ported 1:1 from knelse CharacterData.ToGameDataByteArray()
     /// </summary>
-    public static byte[] ToGameDataBytes(CharacterRecord ch, ushort clientIndex)
+    public static byte[] ToGameDataBytes(CharacterRecord ch, ushort playerIndex)
     {
         var nameEncoded = Win1251.GetBytes(ch.Name);
         var x = CoordsHelper.EncodeServerCoordinate(ch.X);
-        var y = CoordsHelper.EncodeServerCoordinate(-ch.Y); // Y inverted!
-        var z = CoordsHelper.EncodeServerCoordinate(-ch.Z); // Z inverted!
-        var t = CoordsHelper.EncodeServerCoordinate(0); // angle
-
-        int nameLen = nameEncoded.Length + 1;
-
+        var y = CoordsHelper.EncodeServerCoordinate(ch.Y);
+        var z = CoordsHelper.EncodeServerCoordinate(ch.Z);
+        var t = CoordsHelper.EncodeServerCoordinate(ch.Turn);
+        var nameLen = nameEncoded.Length + 1;
         var data = new List<byte>
         {
-            0x00, // placeholder for length, set at end
-            0x01, 0x2C, 0x01, 0x00, 0x00, 0x04,
-            MajorByte(clientIndex), MinorByte(clientIndex),
-            0x08, 0x00,
+            0x00,
+            0x01,
+            0x2C,
+            0x01,
+            0x00,
+            0x00,
+            0x04,
+            GetSecondByte(playerIndex),
+            GetFirstByte(playerIndex),
+            0x08,
+            0x00,
             (byte)(((nameLen & 0b111) << 5) + 2),
             (byte)(((nameEncoded[0] & 0b111) << 5) + ((nameLen & 0b11111000) >> 3))
         };
 
-        // Name with 5-bit shift
-        for (int i = 1; i < nameEncoded.Length; i++)
+        for (var i = 1; i < nameEncoded.Length; i++)
             data.Add((byte)(((nameEncoded[i] & 0b111) << 5) + ((nameEncoded[i - 1] & 0b11111000) >> 3)));
+
         data.Add((byte)((nameEncoded[^1] & 0b11111000) >> 3));
 
         // No clan
         data.Add(0x00);
         data.Add(0x6E);
 
-        // Coordinates
-        data.Add(0x1A); data.Add(0x98); data.Add(0x18); data.Add(0x19);
+        data.Add(0x1A);
+        data.Add(0x98);
+        data.Add(0x18);
+        data.Add(0x19);
         data.AddRange(x);
         data.AddRange(y);
         data.AddRange(z);
         data.AddRange(t);
-        data.Add(0x37); data.Add(0x0D); data.Add(0x79); data.Add(0x00); data.Add(0xF0);
+        data.Add(0x37);
+        data.Add(0x0D);
+        data.Add(0x79);
+        data.Add(0x00);
+        data.Add(0xF0);
 
-        // Equipment slots (all empty for new character): 32 slots x 2 bytes
-        // Helmet, Amulet, Shield, Chestplate, Gloves, Belt, BraceletL, BraceletR,
-        // Ring1-4, Pants, Boots, Guild, MapBook, RecipeBook, MantraBook, 4 empty,
-        // Inkpot, Money, Backpack, Key1, Key2, Mission, Inventory1-10
-        for (int i = 0; i < 32; i++)
+        // Equipment slots (all empty)
+        // Helmet, Amulet, Shield, Armor, Gloves, Belt, LeftBracelet, RightBracelet,
+        // TopLeftRing, TopRightRing, BottomLeftRing, BottomRightRing, Pants, Boots,
+        // Spec, MapBook, RecipeBook, MantraBook, 2 empty, Inkpot, 1 empty (was: IslandToken),
+        // Money, Travelbag, Key1, Key2, Mission,
+        // Inventory 1-10
+        for (var i = 0; i < 32; i++)
         {
-            data.Add(0x00); data.Add(0x00);
+            data.Add(0x00);
+            data.Add(0x00);
         }
 
-        // 21 zero bytes padding
-        for (int i = 0; i < 21; i++) data.Add(0x00);
+        // 20 zero bytes
+        for (var i = 0; i < 20; i++) data.Add(0x00);
 
-        // Special slots (9) + Ammo + SpeedhackMantra + 6 zeroes
-        for (int i = 0; i < 11; i++) { data.Add(0x00); data.Add(0x00); }
-        for (int i = 0; i < 6; i++) data.Add(0x00);
+        // Special slots 1-9 + Ammo + SpeedhackMantra
+        for (var i = 0; i < 11; i++)
+        {
+            data.Add(0x00);
+            data.Add(0x00);
+        }
+
+        data.Add(0x04); // unknown marker
+        data.Add(0x00);
+        data.Add(0x00);
+        data.Add(0x00);
+        data.Add(0x04); // unknown marker
+        data.Add(0x00);
         data.Add(0xF0);
 
         // 150 zero bytes (reserved)
-        for (int i = 0; i < 150; i++) data.Add(0x00);
+        for (var i = 0; i < 150; i++) data.Add(0x00);
 
         // Stats block
-        ushort curHp = (ushort)ch.Hp;
-        ushort maxHp = (ushort)ch.MaxHp;
-        byte karma = 0;
-        int degreeMinusOne = 0;
-        int titleMinusOne = Math.Max(0, ch.Level - 1);
-        int toEncode = degreeMinusOne * 100 + titleMinusOne;
-        int money = (int)ch.Money;
+        ushort CurrentHP = (ushort)ch.Hp;
+        ushort MaxHP = (ushort)ch.MaxHp;
+        byte Karma = 3; // Neutral
+        ushort DegreeLevelMinusOne = 0;
+        ushort TitleLevelMinusOne = 0;
+        int SpecLevelMinusOne = 0;
+        int Money = (int)ch.Money;
 
-        data.Add((byte)(((curHp & 0b111) << 5) + 0b10011));
-        data.Add((byte)((curHp & 0b11111111000) >> 3));
-        data.Add((byte)(((maxHp & 0b11) << 6) + (0b100 << 3) + ((curHp & 0b11100000000000) >> 11)));
-        data.Add((byte)((maxHp & 0b1111111100) >> 2));
-        data.Add((byte)((karma << 4) + ((maxHp & 0b11110000000000) >> 10)));
+        data.Add((byte)(((CurrentHP & 0b111) << 5) + 0b10011));
+        data.Add((byte)((CurrentHP & 0b11111111000) >> 3));
+        data.Add((byte)(((MaxHP & 0b11) << 6) + (0b100 << 3) + ((CurrentHP & 0b11100000000000) >> 11)));
+        data.Add((byte)((MaxHP & 0b1111111100) >> 2));
+        data.Add((byte)(((byte)Karma << 4) + ((MaxHP & 0b11110000000000) >> 10)));
+        var toEncode = DegreeLevelMinusOne * 100 + TitleLevelMinusOne;
         data.Add((byte)(((toEncode & 0b111111) << 2) + 2));
         data.Add((byte)((toEncode & 0b11111111000000) >> 6));
-        data.Add(0x80); // separator
-        data.Add(0x00); // guild = none
-        data.Add((byte)(((money & 0b1111) << 4) + 0)); // guildLevelMinusOne = 0
-        data.Add((byte)((money & 0b111111110000) >> 4));
-        data.Add((byte)((money & 0b11111111000000000000) >> 12));
-        data.Add((byte)((money & 0b1111111100000000000000000000) >> 20));
-        data.Add((byte)((money & 0b11110000000000000000000000000000u) >> 28));
+
+        data.Add(0x80);
+
+        // No spec
+        data.Add(0x00);
+
+        data.Add((byte)(((Money & 0b1111) << 4) + SpecLevelMinusOne));
+        data.Add((byte)((Money & 0b111111110000) >> 4));
+        data.Add((byte)((Money & 0b11111111000000000000) >> 12));
+        data.Add((byte)((Money & 0b1111111100000000000000000000) >> 20));
+        data.Add((byte)((Money & 0b11110000000000000000000000000000u) >> 28));
 
         var arr = data.ToArray();
         arr[0] = (byte)arr.Length;
+
         return arr;
     }
 
-    // Helper: pack lower 6 bits of value with carry from previous field's upper 2 bits
-    private static byte PackLow(ushort value, ushort prev) =>
-        (byte)(((value & 0b111111) << 2) + ((prev & 0b1100000000000000) >> 14));
+    /// <summary>
+    /// Teleport packet, ported from knelse CharacterData.GetTeleportAndUpdateCharacterByteArray()
+    /// </summary>
+    public static byte[] GetTeleportPacket(WorldCoords coords, ushort playerIndex, string playerIndexStr)
+    {
+        var tp = new List<byte>(Convert.FromHexString($"AB002c01000004{playerIndexStr}0840E301"));
+        var x = CoordsHelper.EncodeServerCoordinate(coords.X);
+        var y = CoordsHelper.EncodeServerCoordinate(coords.Y);
+        var z = CoordsHelper.EncodeServerCoordinate(coords.Z);
+        var t = CoordsHelper.EncodeServerCoordinate(coords.Turn);
+        var x_1 = ((x[0] & 0b111) << 5) + 0b00010;
+        var x_2 = ((x[1] & 0b111) << 5) + ((x[0] & 0b11111000) >> 3);
+        var x_3 = ((x[2] & 0b111) << 5) + ((x[1] & 0b11111000) >> 3);
+        var x_4 = ((x[3] & 0b111) << 5) + ((x[2] & 0b11111000) >> 3);
+        var y_1 = ((y[0] & 0b111) << 5) + ((x[3] & 0b11111000) >> 3);
+        var y_2 = ((y[1] & 0b111) << 5) + ((y[0] & 0b11111000) >> 3);
+        var y_3 = ((y[2] & 0b111) << 5) + ((y[1] & 0b11111000) >> 3);
+        var y_4 = ((y[3] & 0b111) << 5) + ((y[2] & 0b11111000) >> 3);
+        var z_1 = ((z[0] & 0b111) << 5) + ((y[3] & 0b11111000) >> 3);
+        var z_2 = ((z[1] & 0b111) << 5) + ((z[0] & 0b11111000) >> 3);
+        var z_3 = ((z[2] & 0b111) << 5) + ((z[1] & 0b11111000) >> 3);
+        var z_4 = ((z[3] & 0b111) << 5) + ((z[2] & 0b11111000) >> 3);
+        var t_1 = ((t[0] & 0b111) << 5) + ((z[3] & 0b11111000) >> 3);
+        var t_2 = ((t[1] & 0b111) << 5) + ((t[0] & 0b11111000) >> 3);
+        var t_3 = ((t[2] & 0b111) << 5) + ((t[1] & 0b11111000) >> 3);
+        var t_4 = ((t[3] & 0b111) << 5) + ((t[2] & 0b11111000) >> 3);
+        var t_5 = 0b10100000 + ((t[3] & 0b11111000) >> 3);
+        tp.Add((byte)x_1);
+        tp.Add((byte)x_2);
+        tp.Add((byte)x_3);
+        tp.Add((byte)x_4);
+        tp.Add((byte)y_1);
+        tp.Add((byte)y_2);
+        tp.Add((byte)y_3);
+        tp.Add((byte)y_4);
+        tp.Add((byte)z_1);
+        tp.Add((byte)z_2);
+        tp.Add((byte)z_3);
+        tp.Add((byte)z_4);
+        tp.Add((byte)t_1);
+        tp.Add((byte)t_2);
+        tp.Add((byte)t_3);
+        tp.Add((byte)t_4);
+        tp.Add((byte)t_5);
 
-    private static byte PackHigh(ushort value) =>
-        (byte)((value & 0b11111111000000) >> 6);
+        tp.AddRange(Convert.FromHexString(
+            "200839EDA800C80000000B40E74520F74210793188BC20245B14222F0C6071000B045824C04201160BB0608045032C1C64F1200B085844C042021613B0A08045052C2C6071010B4CE44526F2421379B1010B0E5874C0C203161FB0008145082C446031220B125994C0C2041627B64081450A2C5460B10AB160C1450B2E5C6031030B1A58D4C0C2061B1202F602"));
+
+        return tp.ToArray();
+    }
 }

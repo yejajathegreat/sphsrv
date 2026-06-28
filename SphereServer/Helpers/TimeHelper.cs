@@ -1,26 +1,42 @@
 namespace SphereServer.Helpers;
 
 /// <summary>
-/// Sphere time: runs 12x faster than real time, epoch = 21.08.1998 10:00 UTC.
-/// Encoded as 5 bytes.
+/// Sphere time encoding, ported 1:1 from knelse TimeHelper.
+/// Uses UnixTimeOrigin = 1649722100, multiplier = 12x.
 /// </summary>
 public static class TimeHelper
 {
-    private static readonly DateTime SphereEpoch = new(1998, 8, 21, 10, 0, 0, DateTimeKind.Utc);
-    private const int TimeMultiplier = 12;
+    public const int UnixTimeOrigin = 1649722100;
+
+    public static DateTime GetCurrentSphereDateTime()
+    {
+        var now = new DateTimeOffset(DateTime.UtcNow);
+        var fromUnixTimeOrigin = now.ToUnixTimeSeconds() - UnixTimeOrigin;
+        var sphereTimeOffset = fromUnixTimeOrigin * 12;
+        var sphereDateTime = new DateTime().AddSeconds(sphereTimeOffset);
+        return sphereDateTime;
+    }
 
     public static byte[] EncodeCurrentSphereDateTime()
     {
-        var realElapsed = DateTime.UtcNow - SphereEpoch;
-        var sphereSeconds = (long)(realElapsed.TotalSeconds * TimeMultiplier);
+        var currentSphereTime = GetCurrentSphereDateTime();
+        var minutes_last4 = (byte)((currentSphereTime.Minute & 0b1111) << 4);
+        var firstDateByte = (byte)(minutes_last4 + 0b1000);
+        var minutes_first2 = (byte)((currentSphereTime.Minute & 0b110000) >> 4);
+        var hours = (byte)(currentSphereTime.Hour << 2);
+        var days_last1 = (byte)((currentSphereTime.Day % 2) << 7);
+        var secondDateByte = (byte)(days_last1 + hours + minutes_first2);
+        var days_first4 = (byte)((currentSphereTime.Day & 0b11110) >> 1);
+        var month = (byte)(currentSphereTime.Month << 4);
+        var thirdDateByte = (byte)(month + days_first4);
+        var years_last8 = (byte)(currentSphereTime.Year & 0b11111111);
+        var years_first1 = (byte)((currentSphereTime.Year & 0b100000000) >> 8);
+        var fourthDateByte = (byte)(0b00110100 + years_first1);
 
-        var result = new byte[5];
-        for (int i = 0; i < 5; i++)
+        return new[]
         {
-            result[i] = (byte)(sphereSeconds & 0xFF);
-            sphereSeconds >>= 8;
-        }
-
-        return result;
+            firstDateByte, secondDateByte,
+            thirdDateByte, years_last8, fourthDateByte
+        };
     }
 }

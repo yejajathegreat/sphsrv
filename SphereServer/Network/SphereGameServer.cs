@@ -1,110 +1,85 @@
-using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
 using SphereServer.Database;
 
 namespace SphereServer.Network;
 
 /// <summary>
-/// Main TCP server. Accepts connections, assigns player indices, manages sessions.
-/// Listens on both game port (25860) and update port (25859) since the client
-/// may connect to either depending on configuration.
+/// Main TCP server. Ported from knelse Server.cs.
+/// Accepts connections on port 25860, assigns player index starting at 0x4f6f.
+/// Each client is handled in its own task via ClientSession.
 /// </summary>
 public class SphereGameServer
 {
-    private const int DefaultPort = 25860;
-    private const int DefaultUpdatePort = 25859;
-
     public PlayerDb Database { get; }
+    public static Encoding Win1251 = null!;
 
-    private readonly TcpListener _listener;
-    private readonly TcpListener _updateListener;
-    private readonly ConcurrentDictionary<ushort, ClientSession> _clients = new();
-    private ushort _nextPlayerIndex = 1;
+    private readonly int _port;
+    private TcpListener? _listener;
+    private int _playerIndex = 0x4F6F;
+    private int _playerCount;
     private readonly CancellationTokenSource _cts = new();
 
-    public SphereGameServer(int port = DefaultPort, string dbPath = "sphere.db")
+    public SphereGameServer(int port = 25860, string dbPath = "sphere.db")
     {
+        _port = port;
         Database = new PlayerDb(dbPath);
-        _listener = new TcpListener(IPAddress.Any, port);
-        _updateListener = new TcpListener(IPAddress.Any, port == DefaultPort ? DefaultUpdatePort : port - 1);
+    }
+
+    private ushort GetNewPlayerIndex()
+    {
+        if (_playerIndex > 65535)
+            throw new ArgumentException("Reached max number of connections");
+        return (ushort)_playerIndex;
     }
 
     public async Task StartAsync()
     {
-        _listener.Start();
-        _updateListener.Start();
-        var mainPort = ((IPEndPoint)_listener.LocalEndpoint).Port;
-        var updPort = ((IPEndPoint)_updateListener.LocalEndpoint).Port;
-        Console.WriteLine($"[SERVER] Listening on ports {mainPort} (game) and {updPort} (update/auth)");
-        Console.WriteLine($"[SERVER] Waiting for connections...");
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        Win1251 = Encoding.GetEncoding(1251);
 
         try
         {
-            // Accept on both ports in parallel
-            var mainTask = AcceptLoop(_listener, "GAME");
-            var updTask = AcceptLoop(_updateListener, "AUTH");
-            await Task.WhenAny(mainTask, updTask);
+            _listener = new TcpListener(IPAddress.Any, _port);
+            _listener.Start();
         }
-        catch (OperationCanceledException) { }
-        finally
+        catch (SocketException se)
         {
-            _listener.Stop();
-            _updateListener.Stop();
+            Console.WriteLine(se.Message);
+            Environment.Exit(se.ErrorCode);
+            return;
         }
-    }
 
-    private async Task AcceptLoop(TcpListener listener, string tag)
-    {
+        Console.WriteLine($"Server up on port {_port}, waiting for connections...");
+
         while (!_cts.Token.IsCancellationRequested)
         {
-            var tcpClient = await listener.AcceptTcpClientAsync(_cts.Token);
-            var playerIndex = _nextPlayerIndex++;
-            var endpoint = tcpClient.Client.RemoteEndPoint?.ToString() ?? "?";
-            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-
-            Console.WriteLine($"[SERVER] New connection #{playerIndex} on port {port} ({tag}) from {endpoint}");
-
-            var session = new ClientSession(tcpClient, playerIndex, this);
-            _clients[playerIndex] = session;
-
-            _ = Task.Run(() => session.RunAsync(), _cts.Token);
-        }
-    }
-
-    public void RemoveClient(ClientSession session)
-    {
-        _clients.TryRemove(session.PlayerIndex, out _);
-        Console.WriteLine($"[SERVER] Client #{session.PlayerIndex} removed, total clients: {_clients.Count}");
-    }
-
-    public IEnumerable<ClientSession> GetIngameClients() =>
-        _clients.Values.Where(c => c.State == ClientState.InGame);
-
-    public ClientSession? GetClient(ushort playerIndex) =>
-        _clients.GetValueOrDefault(playerIndex);
-
-    public async Task BroadcastAsync(byte[] data, ushort? excludeIndex = null)
-    {
-        foreach (var client in GetIngameClients())
-        {
-            if (client.PlayerIndex != excludeIndex)
+            try
             {
-                await client.SendAsync(data);
+                var client = await _listener.AcceptTcpClientAsync(_cts.Token);
+                var currentPlayerIndex = GetNewPlayerIndex();
+                var session = new ClientSession(client, currentPlayerIndex, this);
+#pragma warning disable CS4014
+                Task.Run(() => session.HandleClientAsync());
+#pragma warning restore CS4014
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception e)
+            {
+                Console.WriteLine(e.Message);
             }
         }
     }
+
+    public void IncrementPlayerCount() => Interlocked.Increment(ref _playerCount);
+    public void DecrementPlayerCount() => Interlocked.Decrement(ref _playerCount);
 
     public void Stop()
     {
         Console.WriteLine("[SERVER] Shutting down...");
         _cts.Cancel();
-
-        foreach (var client in _clients.Values)
-        {
-            client.Disconnect();
-        }
-
+        _listener?.Stop();
         Database.Dispose();
         Console.WriteLine("[SERVER] Stopped.");
     }

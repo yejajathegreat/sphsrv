@@ -2,92 +2,89 @@ namespace SphereServer.Helpers;
 
 public class WorldCoords
 {
-    public double X { get; set; }
-    public double Y { get; set; }
-    public double Z { get; set; }
-    public double Turn { get; set; }
+    public double X;
+    public double Y;
+    public double Z;
+    public double Turn;
 
     public WorldCoords(double x = 0, double y = 0, double z = 0, double turn = 0)
     {
         X = x; Y = y; Z = z; Turn = turn;
     }
 
+    public static WorldCoords ShipstoneCenter => new(2614, 157, 1293);
+    public static WorldCoords UmradCenter => new(-1993, -106, 457);
+
+    public string ToDebugString() =>
+        "X: " + X + " Y: " + Y + " Z: " + Z + " Turn: " + Turn;
+
     public override string ToString() => $"({X:F1}, {Y:F1}, {Z:F1}, {Turn:F2})";
 }
 
 /// <summary>
-/// Coordinate encoding/decoding for Sphere protocol.
-/// Server coords: custom float format (1 sign + 7 scale + 1 odd flag + 23 mantissa).
-/// Client coords: IEEE-like with bit shifts.
-/// Ported from SphereEmu CoordsHelper.cs
+/// Coordinate encoding/decoding, ported 1:1 from knelse CoordsHelper.
 /// </summary>
 public static class CoordsHelper
 {
     public static byte[] EncodeServerCoordinate(double a)
     {
-        int scale = 69;
-        double aAbs = Math.Abs(a);
-        double aTemp = aAbs;
-        int steps = 0;
+        var scale = 69;
+        var a_abs = Math.Abs(a);
+        var a_temp = a_abs;
+        var steps = 0;
 
-        if ((int)aAbs == 0)
+        if (((int)a_abs) == 0)
         {
             scale = 58;
         }
-        else if (aTemp < 2048)
+        else if (a_temp < 2048)
         {
-            while (aTemp < 2048)
+            while (a_temp < 2048)
             {
-                aTemp *= 2;
-                steps++;
+                a_temp *= 2;
+                steps += 1;
             }
             scale -= (steps + 1) / 2;
             if (scale < 0) scale = 58;
         }
         else
         {
-            while (aTemp > 4096)
+            while (a_temp > 4096)
             {
-                aTemp /= 2;
-                steps++;
+                a_temp /= 2;
+                steps += 1;
             }
             scale += steps / 2;
         }
 
-        byte a3 = (byte)(((a < 0 ? 1 : 0) << 7) + scale);
-        double mul = Math.Pow(2, (int)Math.Log(aAbs, 2));
-        int numToEncode = (int)(0b100000000000000000000000 * (aAbs / mul + 1));
+        var a_3 = (byte)(((a < 0 ? 1 : 0) << 7) + scale);
+        var mul = Math.Pow(2, ((int)Math.Log2(a_abs)));
+        var numToEncode = (int)(0b100000000000000000000000 * (a_abs / mul + 1));
 
-        byte a2 = (byte)(((numToEncode & 0b111111110000000000000000) >> 16) + (steps % 2 == 1 ? 0b10000000 : 0));
-        byte a1 = (byte)((numToEncode & 0b1111111100000000) >> 8);
-        byte a0 = (byte)(numToEncode & 0b11111111);
+        var a_2 = (byte)(((numToEncode & 0b111111111111111100000000) >> 16) + (steps % 2 == 1 ? 0b10000000 : 0));
+        var a_1 = (byte)((numToEncode & 0b1111111100000000) >> 8);
+        var a_0 = (byte)(numToEncode & 0b11111111);
 
-        return [a0, a1, a2, a3];
+        return new[] { a_0, a_1, a_2, a_3 };
     }
 
     public static double DecodeClientCoordinate(byte[] a)
     {
-        int xScale = ((a[4] & 0b11111) << 3) + ((a[3] & 0b11100000) >> 5);
-        if (xScale == 126) return 0.0;
+        var x_scale = ((a[4] & 0b11111) << 3) + ((a[3] & 0b11100000) >> 5);
+        if (x_scale == 126) return 0.0;
 
-        double baseCoord = Math.Pow(2, xScale - 127);
-        int sign = (a[4] & 0b100000) > 0 ? -1 : 1;
-
-        return (1 + (float)(((a[3] & 0b11111) << 18) + (a[2] << 10) + (a[1] << 2) +
-                            ((a[0] & 0b11000000) >> 6)) / 0b100000000000000000000000) * baseCoord * sign;
+        var baseCoord = Math.Pow(2, x_scale - 127);
+        var sign = (a[4] & 0b100000) > 0 ? -1 : 1;
+        return ((1 + ((float)(((a[3] & 0b11111) << 18) + (a[2] << 10) + (a[1] << 2) +
+                      ((a[0] & 0b11000000) >> 6))) / 0b100000000000000000000000) * baseCoord) * sign;
     }
 
-    /// <summary>
-    /// Extract player coords from ping packet (0x26, 38 bytes).
-    /// X at offset 21, Y at 25, Z at 29, Turn at 33 — each 5 bytes.
-    /// </summary>
     public static WorldCoords GetCoordsFromPingBytes(byte[] rcvBuffer)
     {
-        var x = DecodeClientCoordinate(rcvBuffer.AsSpan(21, 5).ToArray());
-        var y = DecodeClientCoordinate(rcvBuffer.AsSpan(25, 5).ToArray());
-        var z = DecodeClientCoordinate(rcvBuffer.AsSpan(29, 5).ToArray());
-        var turn = DecodeClientCoordinate(rcvBuffer.AsSpan(33, 5).ToArray());
-
+        var x = DecodeClientCoordinate(rcvBuffer[21..26]);
+        var y = DecodeClientCoordinate(rcvBuffer[25..30]);
+        var z = DecodeClientCoordinate(rcvBuffer[29..34]);
+        var turn = DecodeClientCoordinate(rcvBuffer[33..38]);
         return new WorldCoords(x, y, z, turn);
     }
 }

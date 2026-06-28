@@ -1,7 +1,7 @@
+using System.Text;
 using SphereServer.Network;
 
-Console.WriteLine("=== Sphere Server (Early Version Emulator) ===");
-Console.WriteLine("Hyperion + Charon only, no specializations, no third continent");
+Console.WriteLine("=== Sphere Server Emulator (knelse port) ===");
 Console.WriteLine();
 
 int port = 25860;
