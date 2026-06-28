@@ -140,8 +140,9 @@ public class ClientSession
             // Step 14: Send world data
             await WorldDataTest.SendNewCharacterWorldData(_ns, playerIndexStr);
 
-            // Step 15: Teleport to new player dungeon
-            MoveToNewPlayerDungeon(selectedCharacter, playerIndexStr);
+            // Step 15: Spawn in open world (Shipstone)
+            // Dungeon teleport disabled — instance initialization not yet implemented
+            // MoveToNewPlayerDungeon(selectedCharacter, playerIndexStr);
 
             // Step 16: Start 6-second ping thread
             CreateSixSecondPingThread();
