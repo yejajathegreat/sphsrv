@@ -2,6 +2,7 @@ using System.Net.Sockets;
 using System.Text;
 using SphereServer.Database;
 using SphereServer.Helpers;
+using SphereServer.GameLogic;
 using SphereServer.Protocol;
 
 namespace SphereServer.Network;
@@ -137,12 +138,37 @@ public class ClientSession
             // Step 13: Wait for 0x13 ACK
             while (await _ns.ReadAsync(rcvBuffer) != 0x13) { }
 
-            // Step 14: Send world data
-            await WorldDataTest.SendNewCharacterWorldData(_ns, playerIndexStr);
+            // Step 14: Send world data + dungeon
+            if (selectedCharacter.X < -1000 && selectedCharacter.Y < -4000)
+            {
+                // Character is at dungeon coords — send dungeon instance data
+                await SendNewPlayerDungeon(playerIndexStr);
+            }
+            else
+            {
+                // Character is in open world — send world data
+                await WorldDataTest.SendNewCharacterWorldData(_ns, playerIndexStr);
+            }
 
-            // Step 15: Spawn in open world (Shipstone)
-            // Dungeon teleport disabled — instance initialization not yet implemented
-            // MoveToNewPlayerDungeon(selectedCharacter, playerIndexStr);
+            // Step 15: Spawn NPCs (only in open world, not in dungeon)
+            var isInDungeon = selectedCharacter.X < -1000 && selectedCharacter.Y < -4000;
+            if (!isInDungeon)
+            {
+                try
+                {
+                    var spawnDataPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SpawnData");
+                    var npcPackets = NpcSpawner.BuildAllSpawnPackets(spawnDataPath, startEntityId: 100);
+                    if (npcPackets.Length > 0)
+                    {
+                        await _ns.WriteAsync(npcPackets);
+                        Console.WriteLine($"SRV: Sent {npcPackets.Length} bytes of NPC spawn data");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"SRV: NPC spawn error: {ex.Message}");
+                }
+            }
 
             // Step 16: Start 6-second ping thread
             CreateSixSecondPingThread();
@@ -346,6 +372,32 @@ public class ClientSession
         // overflow
         if (_pingCounter < 0xE001)
             _pingCounter = 0xE001;
+    }
+
+    /// <summary>
+    /// Send new player dungeon instance data directly (no teleport needed, coords already set).
+    /// Sends dungeon blob immediately after 0x13 ACK instead of world data.
+    /// </summary>
+    private async Task SendNewPlayerDungeon(string playerIndexStr)
+    {
+        // LoadNewPlayerDungeon from knelse CommonPackets — contains dungeon objects
+        // (teleports, NPCs, tutorial messages). Prefix 06 7A = dungeon instance type.
+        var dungeonData =
+            "BF002C0100067A2C0C10802F811F010BE2E00320A14B02000000000000000050649101A000039AFE00850900F8F9AF00063E00C044620050C62200C0762200441619000A2F809DF50B60E1337CA2838DC436A88C45F0FBF144C1882C3200145E4020A0F00CA2838DC436A88C45F0FBF144856FD0ED2CFE558F4806568F480606F8212C400D3E9F1045629756C62241A476A2E550140014433A29DE0785170000F8252CA01F3E19A14662B053C62249C2762280441619890A5900F0FFFFFF0F" +
+            "C1002C0100067A150B2483CF38A391B89495B1C813319E680C140500C550EA8000C0CF62813FF001CD2512ABA232160995CB130124B2C80050C80280FFFFFFFFC2132C1C0004FC0C5800161F00095D12000000000000000080228B0C000518D0F407286401C0FFFFFFFFEF7F85CFF001002612038032160100B6130120B2C8005078810081C233646DCF15EB822612257CD01517BE01000000000000000000000000A0F00C19D976C5DBB489440D7E72C5856F0000000000000000000000000000" +
+            "C8002C0100067AFF2B7C46E11908C0E68AF5411389FE18E28A0BDF00000000000000000000000000F00360E1337C008089C400A08C450080ED4400882C3200145E4040A0F00C737F75C514A18944208271C5856F00000000000000000000000000F8E53EF0193E00C044620050C62200C0762200441619000A2F30205078069906BAE283DA44A22BC1B9E2C23700000000000000000000000000FC741FF8019FB95C2231DE2A6311FBDE3C1100228B0C003F061690C027C396489CBFC958E4DBD74E0480C8220300" +
+            "C9002C0100067A0C2C2041E10502007E022C2081CF1B9A91D8F292B1080EB09D080091450680C20B0800FC065840029F58C72331AE2863911E863B1100228B0C0085171800F8093F80043E1FD34662154FC622EEA8782200441619000A2F4000F02B5300097CE8AF8BC446968C45D242F14400882C3200145EA000E0A7BF0212F838E52512B36132164182C6130120B2C80050780103809FDE02AEE10320A14B02000000000000000050649101A000039AFE00850900F8F9AF00063E00C044620050C62200C0762200441619000A2F809DF50B60E1337CA2838DC436A88C45F0FBF144856FD0ED2CFE558F4806568F480606F8212C400D3E9F1045629756C62241A476A2E550140014433A29DE0785170000F8252CA01F3E19A14662B053C62249C2762280441619890A5900F0FFFFFF0F" +
+            "1B002C0100067A7A0BB846010634FD010A131050C80280FFFFFF7F" +
+            "2D002C01006DF78A2CDBE1400F61016A1098F9F435FEF22F6101FD10006DFED71FC0CF62813F10547EFED90900";
+
+        await _ns.WriteAsync(Convert.FromHexString(dungeonData));
+        Console.WriteLine("SRV: Sent new player dungeon instance data");
+
+        Thread.Sleep(100);
+
+        // Spawn a test mob in the dungeon
+        var dungeonCoords = new WorldCoords(-1098, -4501.62158203125, 1900, 1.55);
+        await _ns.WriteAsync(TestHelper.GetNewPlayerDungeonMobData(dungeonCoords));
     }
 
     /// <summary>

@@ -17,7 +17,7 @@ public class CharacterRecord
     public int Id { get; set; }
     public string Name { get; set; } = string.Empty;
     public int Level { get; set; } = 1;
-    // Default coords: Shipstone city center (valid open world with terrain)
+    // Default coords: Shipstone city center
     public double X { get; set; } = 2614;
     public double Y { get; set; } = 157;
     public double Z { get; set; } = 1293;
